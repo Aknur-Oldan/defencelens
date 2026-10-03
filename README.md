@@ -33,6 +33,13 @@ Small organizations (volunteer centers, NGOs, local services) run critical coord
 | 19 | Demo/synthetic data mixed invisibly with real data | Synthetic data is loaded only explicitly and tagged `"synthetic": true`; the DB starts empty |
 | 20 | Degraded mode is undefined (what if Redis/Trivy/network is down?) | UI shows waiting/error/retry states; Trivy gets automatic retries plus manual retry; system keeps ingesting while scans wait |
 
+## Documentation
+
+- [DEMO.md](DEMO.md) — 3–5 minute jury demo script
+- [LIMITATIONS.md](LIMITATIONS.md) — explicit boundaries of the MVP
+- [STATUS.md](STATUS.md) — what works, how it was verified, next step
+- [DefenceLens-presentation.pdf](DefenceLens-presentation.pdf) — slide deck
+
 ## Quick start
 
 Requires Docker Engine and Docker Compose. No Node.js, Python, or Trivy needed on the host.

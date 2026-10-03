@@ -1,4 +1,3 @@
-"""Run against the real Compose API; produces explicitly synthetic verification data."""
 import json, os, time, uuid, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone

@@ -1,4 +1,3 @@
-"""Deterministic rules. Event-time windows, no LLM or automatic response."""
 import hashlib
 import json
 import re
@@ -32,7 +31,6 @@ def normalize(raw):
                        ip=d["ip"], method=d["method"], path=d["path"], status=int(d["status"]))
     if not isinstance(raw, dict):
         raise ValueError("event must be an object")
-    # Vector file source wraps the original line in message.
     if "message" in raw and "status" not in raw and "event" not in raw:
         return normalize(raw["message"])
     if not raw.get("timestamp"):
@@ -55,7 +53,6 @@ def normalize(raw):
 
 def analyze(db, service_id, start, end):
     service = db.get(Service, service_id)
-    # Include the baseline before and follow-up after late-arriving events.
     lo = (datetime.fromisoformat(start) - timedelta(minutes=10)).isoformat()
     hi = (datetime.fromisoformat(end) + timedelta(minutes=10)).isoformat()
     events = list(db.scalars(select(Event).where(Event.service_id == service_id, Event.timestamp >= lo, Event.timestamp <= hi).order_by(Event.timestamp, Event.id)))
@@ -93,7 +90,6 @@ def analyze(db, service_id, start, end):
                    ["Check API and database availability, starting with a health check.", "Correlate errors with deployments; consider rollback only after verification.", "After taking action, review new logs and submit a test request."])
 
 def record(db, service, detector, event, evidence, principal, title, priority, facts, hypotheses, recommendations):
-    # Deduplicate overlapping detections within a 15-minute event-time episode.
     recent = db.scalar(select(Incident).where(Incident.service_id == service.id, Incident.detector == detector,
         Incident.fingerprint.like(hashlib.sha256(json.dumps(principal, sort_keys=True).encode()).hexdigest() + ":%"),
         Incident.created_at >= (datetime.fromisoformat(event.timestamp) - timedelta(minutes=15)).isoformat(),

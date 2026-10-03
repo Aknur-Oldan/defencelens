@@ -1,4 +1,3 @@
-"""Durable DB outbox -> RQ, reconciled after Redis/worker interruptions."""
 import time
 import logging
 from datetime import datetime, timezone, timedelta

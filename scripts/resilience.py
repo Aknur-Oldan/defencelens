@@ -1,4 +1,3 @@
-"""Real Redis outage + durable scan recovery. Touches only this Compose project."""
 import json, subprocess, time, urllib.request, uuid
 from datetime import datetime, timezone
 from integration import call, BASE, TOKEN

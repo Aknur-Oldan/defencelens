@@ -7,3 +7,6 @@ data/
 *.tar
 *.db
 test-results/
+demo/logs/*.jsonl
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo

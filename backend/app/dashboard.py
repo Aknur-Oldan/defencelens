@@ -44,7 +44,6 @@ def dashboard(db=Depends(session)):
 
 @router.post("/demo")
 def demo(db=Depends(session)):
-    # Explicitly requested demo only; never inserted on application startup.
     existing = db.get(Source, "demo-api")
     if existing:
         return {"detail": "Demo is already loaded. Re-running it does not create duplicates.", "source_id": existing.id}

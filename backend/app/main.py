@@ -122,7 +122,6 @@ def sources(db=Depends(session)):
 
 def ingest(db, source_id, lines):
     source = require(db, Source, source_id)
-    # Serialize all batches of this service, including multiple sources.
     db.execute(select(Service).where(Service.id == source.service_id).with_for_update()).scalar_one()
     db.refresh(source)
     accepted, duplicates, failures, timestamps = 0, 0, [], []

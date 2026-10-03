@@ -10,13 +10,12 @@ from sqlalchemy import select
 from app.main import auth, row, require
 from app.db import session
 from app.config import settings
-from app.models import Scan, Deployment, Service, uid, now
+from app.models import Scan, Deployment, Service, Policy, uid, now
 from app.analysis import utc
 
 router = APIRouter(prefix="/api", dependencies=[Depends(auth)])
 
 def validate_archive(path):
-    # Inspect metadata only; never extract or execute user content.
     with tarfile.open(path, mode="r:") as archive:
         manifest = None
         names = set()
@@ -87,6 +86,94 @@ def retry(id: str, db=Depends(session)):
     obj.status, obj.error, obj.updated_at = "pending", None, now()
     db.commit()
     return row(obj)
+
+class PolicyInput(BaseModel):
+    max_critical: int = Field(default=0, ge=0, le=10000)
+    max_high: int = Field(default=5, ge=0, le=10000)
+    fail_on_secrets: bool = True
+
+def current_policy(db):
+    obj = db.get(Policy, "default")
+    if obj is None:
+        obj = Policy(id="default")
+        db.add(obj)
+        db.commit()
+    return obj
+
+@router.get("/policy")
+def get_policy(db=Depends(session)):
+    return row(current_policy(db))
+
+@router.put("/policy")
+def update_policy(data: PolicyInput, db=Depends(session)):
+    obj = current_policy(db)
+    obj.max_critical = data.max_critical
+    obj.max_high = data.max_high
+    obj.fail_on_secrets = int(data.fail_on_secrets)
+    obj.updated_at = now()
+    db.commit()
+    return row(obj)
+
+def evaluate_policy(scan, policy):
+    if scan.status != "completed" or not scan.result:
+        return {"outcome": "error", "reasons": [f"Scan status is '{scan.status}'. A scan that did not complete must not pass a security gate." + (f" Error: {scan.error}" if scan.error else "")],
+                "policy": {"max_critical": policy.max_critical, "max_high": policy.max_high, "fail_on_secrets": bool(policy.fail_on_secrets)}}
+    severity = scan.result["summary"].get("severity", {})
+    critical, high = severity.get("CRITICAL", 0), severity.get("HIGH", 0)
+    secrets = scan.result["summary"].get("secrets", 0)
+    reasons = []
+    if critical > policy.max_critical:
+        reasons.append(f"CRITICAL vulnerabilities: {critical} exceeds the allowed {policy.max_critical}.")
+    if high > policy.max_high:
+        reasons.append(f"HIGH vulnerabilities: {high} exceeds the allowed {policy.max_high}.")
+    if policy.fail_on_secrets and secrets > 0:
+        reasons.append(f"Potential secrets found: {secrets}. Review and rotate before deployment.")
+    outcome = "fail" if reasons else "pass"
+    if not reasons:
+        reasons.append(f"Within policy: CRITICAL {critical}/{policy.max_critical}, HIGH {high}/{policy.max_high}, potential secrets {secrets}" + (" (blocking)" if policy.fail_on_secrets else " (not blocking)") + ".")
+    return {"outcome": outcome, "reasons": reasons,
+            "counts": {"critical": critical, "high": high, "secrets": secrets},
+            "policy": {"max_critical": policy.max_critical, "max_high": policy.max_high, "fail_on_secrets": bool(policy.fail_on_secrets)},
+            "scanner_version": scan.result.get("metadata", {}).get("scanner_version"),
+            "vulnerability_db_updated_at": scan.result.get("metadata", {}).get("vulnerability_db_updated_at")}
+
+@router.get("/scans/{id}/policy")
+def scan_policy(id: str, db=Depends(session)):
+    scan = require(db, Scan, id)
+    return dict(evaluate_policy(scan, current_policy(db)), scan_id=id, filename=scan.filename, digest=scan.digest)
+
+def finding_key(v):
+    return f"{v.get('VulnerabilityID')}::{v.get('PkgName')}"
+
+@router.get("/scans/{id}/compare/{other_id}")
+def compare_scans(id: str, other_id: str, db=Depends(session)):
+    base = require(db, Scan, id)
+    target = require(db, Scan, other_id)
+    for scan in (base, target):
+        if scan.status != "completed" or not scan.result:
+            raise HTTPException(409, f"Scan {scan.filename} has status '{scan.status}'. Comparison requires two completed scans.")
+    base_findings = {finding_key(v): v for v in base.result["vulnerabilities"]}
+    target_findings = {finding_key(v): v for v in target.result["vulnerabilities"]}
+    new = [target_findings[k] for k in target_findings.keys() - base_findings.keys()]
+    resolved = [base_findings[k] for k in base_findings.keys() - target_findings.keys()]
+    remaining = [target_findings[k] for k in target_findings.keys() & base_findings.keys()]
+    order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    for group in (new, resolved, remaining):
+        group.sort(key=lambda v: (order.get(v.get("Severity"), 9), str(v.get("VulnerabilityID"))))
+    base_meta = base.result.get("metadata", {})
+    target_meta = target.result.get("metadata", {})
+    notes = ["Comparison is keyed by CVE and package name within each image.",
+             "A resolved finding means it is absent from the rescanned image, not that the fix is deployed. Deployment requires an operator-confirmed deployment record.",
+             "New or resolved findings can also result from Trivy vulnerability database updates between scans, not only from image changes."]
+    if base_meta.get("scanner_version") != target_meta.get("scanner_version"):
+        notes.append(f"Scanner versions differ: {base_meta.get('scanner_version')} vs {target_meta.get('scanner_version')}.")
+    if base_meta.get("vulnerability_db_updated_at") != target_meta.get("vulnerability_db_updated_at"):
+        notes.append(f"Vulnerability database snapshots differ: {base_meta.get('vulnerability_db_updated_at')} vs {target_meta.get('vulnerability_db_updated_at')}.")
+    return {"base": {"id": base.id, "filename": base.filename, "digest": base.digest, "created_at": base.created_at, "metadata": base_meta},
+            "target": {"id": target.id, "filename": target.filename, "digest": target.digest, "created_at": target.created_at, "metadata": target_meta},
+            "new": new, "resolved": resolved, "remaining": remaining,
+            "summary": {"new": len(new), "resolved": len(resolved), "remaining": len(remaining)},
+            "notes": notes}
 
 class DeploymentInput(BaseModel):
     service_id: str

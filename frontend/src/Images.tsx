@@ -2,8 +2,35 @@ import {useState} from 'react'
 import {useQuery,useMutation,useQueryClient} from '@tanstack/react-query'
 import {Upload,ArrowLeft,RefreshCw} from 'lucide-react'
 import {api,date} from './api'
-import {Service,Scan,Deployment} from './types'
+import {Service,Scan,Deployment,Policy,PolicyVerdict,Comparison} from './types'
 import {Panel,Badge,Empty,Loading,ErrorBox} from './ui'
+function FindingsTable({rows}:{rows:Record<string,string>[]}){
+ return rows.length?<div className="table-scroll"><table><thead><tr><th>CVE</th><th>Level</th><th>Component</th><th>Installed</th><th>Fixed</th></tr></thead><tbody>{rows.map((v,n)=><tr key={n}><td>{v.VulnerabilityID}</td><td><Badge value={v.Severity}/></td><td>{v.PkgName}</td><td>{v.InstalledVersion}</td><td>{v.FixedVersion||'n/a'}</td></tr>)}</tbody></table></div>:<Empty>None</Empty>
+}
+function PolicyGate({scanId}:{scanId:string}){
+ const verdict=useQuery({queryKey:['policy-verdict',scanId],queryFn:()=>api<PolicyVerdict>('/scans/'+scanId+'/policy')})
+ if(verdict.isPending)return <Loading/>
+ if(verdict.error)return <ErrorBox error={verdict.error}/>
+ const v=verdict.data!
+ return <div className="service-card"><div className="flex-between"><b>Deployment policy gate</b><Badge value={v.outcome}/></div>{v.reasons.map(r=><p key={r}>{r}</p>)}<small className="muted">CI usage: python scripts/policy_check.py --scan-id {scanId} · exit 0 pass, 1 fail, 2 error</small></div>
+}
+function PolicySettings(){
+ const qc=useQueryClient()
+ const q=useQuery({queryKey:['policy'],queryFn:()=>api<Policy>('/policy')})
+ const [draft,setDraft]=useState<{max_critical:string;max_high:string;fail_on_secrets:boolean}|null>(null)
+ const save=useMutation({mutationFn:(body:{max_critical:number;max_high:number;fail_on_secrets:boolean})=>api('/policy',{method:'PUT',body:JSON.stringify(body)}),onSuccess:()=>{qc.invalidateQueries();setDraft(null)}})
+ if(q.isPending)return <Panel title="Deployment policy"><Loading/></Panel>
+ if(q.error)return <Panel title="Deployment policy"><ErrorBox error={q.error}/></Panel>
+ const p=q.data!
+ const d=draft??{max_critical:String(p.max_critical),max_high:String(p.max_high),fail_on_secrets:!!p.fail_on_secrets}
+ return <Panel title="Deployment policy"><form className="form" onSubmit={e=>{e.preventDefault();save.mutate({max_critical:Number(d.max_critical),max_high:Number(d.max_high),fail_on_secrets:d.fail_on_secrets})}}><div className="form-row"><label>Max CRITICAL findings<input type="number" min={0} value={d.max_critical} onChange={e=>setDraft({...d,max_critical:e.target.value})}/></label><label>Max HIGH findings<input type="number" min={0} value={d.max_high} onChange={e=>setDraft({...d,max_high:e.target.value})}/></label></div><label className="checkbox"><input type="checkbox" checked={d.fail_on_secrets} onChange={e=>setDraft({...d,fail_on_secrets:e.target.checked})}/>Fail when potential secrets are found</label><ErrorBox error={save.error}/><button className="primary" disabled={save.isPending}>Save policy</button></form><p className="muted">A scan that fails or times out returns the error outcome, never pass. Make the CLI gate a required CI step to actually block deployments: python scripts/policy_check.py --image image.tar</p></Panel>
+}
+function CompareScans({scans}:{scans:Scan[]}){
+ const completed=scans.filter(s=>s.status==='completed')
+ const [base,setBase]=useState(''),[target,setTarget]=useState('')
+ const q=useQuery({queryKey:['compare',base,target],queryFn:()=>api<Comparison>('/scans/'+base+'/compare/'+target),enabled:!!base&&!!target&&base!==target})
+ return <Panel title="Compare original and rescanned image">{completed.length<2?<Empty>Two completed scans are required for comparison</Empty>:<><div className="form-row"><label>Original scan<select value={base} onChange={e=>setBase(e.target.value)}><option value="">Select</option>{completed.map(s=><option key={s.id} value={s.id}>{s.filename} · {date(s.created_at)}</option>)}</select></label><label>Rescanned image<select value={target} onChange={e=>setTarget(e.target.value)}><option value="">Select</option>{completed.map(s=><option key={s.id} value={s.id}>{s.filename} · {date(s.created_at)}</option>)}</select></label></div>{base&&target&&base===target&&<div className="notice">Select two different scans.</div>}<ErrorBox error={q.error}/>{q.data&&<><div className="scan-totals"><span><b>{q.data.summary.new}</b> new</span><span><b>{q.data.summary.resolved}</b> resolved in image</span><span><b>{q.data.summary.remaining}</b> remaining</span></div>{q.data.notes.map(n=><p className="muted" key={n}>{n}</p>)}<h3 className="section-label">New findings</h3><FindingsTable rows={q.data.new}/><h3 className="section-label">Resolved in rescanned image</h3><FindingsTable rows={q.data.resolved}/><details><summary>Remaining findings ({q.data.remaining.length})</summary><FindingsTable rows={q.data.remaining}/></details></>}</>}</Panel>
+}
 export function Images({services}:{services:Service[]}){
  const qc=useQueryClient()
  const q=useQuery({queryKey:['scans'],queryFn:()=>api<Scan[]>('/scans')})

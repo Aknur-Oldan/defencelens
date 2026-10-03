@@ -79,6 +79,14 @@ class Scan(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+class Policy(Base):
+    __tablename__ = "policies"
+    id: Mapped[str] = mapped_column(String, primary_key=True, default="default")
+    max_critical: Mapped[int] = mapped_column(Integer, default=0)
+    max_high: Mapped[int] = mapped_column(Integer, default=5)
+    fail_on_secrets: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[str] = mapped_column(String, default=now)
+
 class Deployment(Base):
     __tablename__ = "deployments"
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uid)
